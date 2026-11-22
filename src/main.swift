@@ -1278,7 +1278,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add(AXIsProcessTrusted() ? "Click the red squiggle in your text box, or press ⌃⌥U" : "Select text, then press ⇧⌘U (or right-click > Services)", nil)
         add("Show an example", #selector(example))
         menu.addItem(.separator())
-        add(Engine.smart ? "Smart mode is on (Claude Haiku)" : "Basic mode: spelling only, offline", nil)
+        add(Engine.smart ? "Smart mode is on (Claude Sonnet)" : "Basic mode: spelling only, offline", nil)
         if Engine.smart {
             add("Remove Claude key (back to basic mode)", #selector(removeKey))
         } else {
@@ -1374,7 +1374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func enterKey() {
         let alert = NSAlert()
         alert.messageText = "Turn on Smart mode"
-        alert.informativeText = "Right now Untangle only fixes simple spelling. Smart mode also fixes grammar and tangled sentences, in English and German, by sending the text you untangle to Claude Haiku. Paste a Claude API key (it starts with sk-ant-). The key is kept in your Mac's Keychain. Cost is tiny: roughly one cent per 50 emails."
+        alert.informativeText = "Right now Untangle only fixes simple spelling. Smart mode also fixes grammar and tangled sentences, in English and German, by sending the text you untangle to Claude Sonnet. Paste a Claude API key (it starts with sk-ant-). The key is kept in your Mac's Keychain. Cost is tiny: roughly a third of a cent per message."
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
         field.placeholderString = "sk-ant-…"
         alert.accessoryView = field

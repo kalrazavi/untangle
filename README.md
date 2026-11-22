@@ -40,7 +40,7 @@ Every time Untangle fixes a word that is not a real word in English or German (`
 ## How it works
 
 1. **Find the text.** macOS Accessibility locates the text box in focus, in any app. Password fields are never read.
-2. **Proofread.** In Smart mode the text goes to Claude (Anthropic's small, fast Haiku model) together with the proofread-only rulebook.
+2. **Proofread.** In Smart mode the text goes to Claude (Anthropic's Sonnet model) together with the proofread-only rulebook.
 3. **Compare.** The app works out word by word what changed, so it can show you each change.
 4. **Paste back.** The corrected text replaces the original.
 
