@@ -124,6 +124,7 @@ enum Keychain {
     private static var cache: String?
 
     static var key: String? {
+        if ProcessInfo.processInfo.environment["UNTANGLE_NOKEY"] != nil { return nil }   // for tests only: never touch the keychain
         if !loaded {
             var q = base
             q[kSecReturnData as String] = true
@@ -249,6 +250,25 @@ enum Learned {
         return added
     }
 
+    /// What you typed against what you finally wanted: every one-word typo is stored with extra weight and replaces an earlier guess.
+    @discardableResult static func teach(_ typed: String, _ wanted: String) -> Int {
+        var book = all, added = 0
+        for piece in diffPieces(typed, wanted) {
+            guard case .change(let o, let r) = piece, isWord(o), isWord(r) else { continue }
+            let key = o.lowercased()
+            guard key != r.lowercased(), notAWord(o) else { continue }
+            let old = book[key]
+            book[key] = Entry(to: r, n: (old?.to.lowercased() == r.lowercased() ? old!.n : 0) + 3, other: 0)
+            added += 1
+        }
+        guard added > 0 else { return 0 }
+        cache = book
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let d = try? enc.encode(book) { try? d.write(to: url, options: .atomic) }
+        return added
+    }
+
     /// Lines for the proofreader: the typos you make most, as hints for what a garbled word means.
     static var hints: String {
         let top = usable.prefix(120)
@@ -266,6 +286,66 @@ enum Learned {
             if let f = t.first, f.isUppercase, let rf = e.to.first { return String(rf).uppercased() + e.to.dropFirst() }
             return e.to
         }.joined()
+    }
+}
+
+/// Lessons you taught: where the proofreader's result was wrong and what you changed it to.
+/// A plain file on this Mac: ~/Library/Application Support/Untangle/lessons.json
+enum Lessons {
+    struct Lesson: Codable { var wrong: String; var right: String; var when: String }
+    private static let url: URL = {
+        if let test = ProcessInfo.processInfo.environment["UNTANGLE_LESSONS"] { return URL(fileURLWithPath: test) }   // for tests only
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Untangle/lessons.json")
+    }()
+    private static var cache: [Lesson]?
+    static var all: [Lesson] {
+        if cache == nil { cache = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([Lesson].self, from: $0) } ?? [] }
+        return cache ?? []
+    }
+
+    private static func lastWords(_ s: String, _ n: Int) -> String {
+        let t = tokenize(s); var words = 0, i = t.count
+        while i > 0 && words < n { i -= 1; if !t[i].allSatisfy({ $0.isWhitespace }) { words += 1 } }
+        return t[i...].joined()
+    }
+    private static func firstWords(_ s: String, _ n: Int) -> String {
+        let t = tokenize(s); var words = 0, i = 0
+        while i < t.count && words < n { if !t[i].allSatisfy({ $0.isWhitespace }) { words += 1 }; i += 1 }
+        return t[..<i].joined()
+    }
+
+    /// Compares the proofreader's result with your corrected version and keeps each difference with a few words around it.
+    @discardableResult static func record(untangled: String, corrected: String) -> Int {
+        let pieces = diffPieces(untangled, corrected)
+        var found: [Lesson] = []
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        for (i, p) in pieces.enumerated() {
+            guard case .change(let o, let r) = p else { continue }
+            // New words you simply added are new content, not a correction of a mistake.
+            if !o.isEmpty, r.hasPrefix(o) || r.hasSuffix(o), r.count > o.count,
+               (r.hasPrefix(o) ? r.dropFirst(o.count) : r.dropLast(o.count)).contains(where: { $0.isLetter }) { continue }
+            var before = "", after = ""
+            if i > 0, case .same(let s) = pieces[i - 1] { before = lastWords(s, 4) }
+            if i + 1 < pieces.count, case .same(let s) = pieces[i + 1] { after = firstWords(s, 4) }
+            let wrong = (before + o + after).replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+            let right = (before + r + after).replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+            if wrong != right, wrong.count <= 300, right.count <= 300 { found.append(Lesson(wrong: wrong, right: right, when: stamp)) }
+        }
+        guard !found.isEmpty else { return 0 }
+        var list = all.filter { old in !found.contains { $0.wrong == old.wrong } } + found
+        if list.count > 80 { list = Array(list.suffix(80)) }
+        cache = list
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted]
+        if let d = try? enc.encode(list) { try? d.write(to: url, options: .atomic) }
+        return found.count
+    }
+
+    static var hints: String {
+        let recent = all.suffix(40)
+        guard !recent.isEmpty else { return "" }
+        return "\n\nLessons from this writer. Earlier proofreading results were wrong in these places and the writer corrected them by hand. Follow these corrections whenever the same or a similar case comes up:\n"
+            + recent.map { "wrong: \($0.wrong)\nright: \($0.right)" }.joined(separator: "\n\n")
     }
 }
 
@@ -320,7 +400,7 @@ enum Engine {
         guard let list = try? String(contentsOf: file, encoding: .utf8), !list.allSatisfy({ $0.isWhitespace }) else { return "" }
         return "\n\nThe writer's own names and words. They are correct as listed; a garbled word that resembles one of them is probably meant to be it:\n" + list
     }
-    static var model: String { UserDefaults.standard.string(forKey: "model") ?? "claude-sonnet-5-5" }
+    static var model: String { UserDefaults.standard.string(forKey: "model") ?? "claude-haiku-5-5" }
     static var smart: Bool { Keychain.key != nil }
 
     /// Calls back on the main thread with the corrected text and a short note on how it was checked.
@@ -359,7 +439,7 @@ enum Engine {
         var body: [String: Any] = [
             "model": model,
             "max_tokens": 16000,
-            "system": prompt + names + Learned.hints,
+            "system": prompt + names + Lessons.hints + Learned.hints,
             "messages": [["role": "user", "content": "<text>\n\(text)\n</text>"]],
         ]
         // Sonnet 5.5 does not accept "disabled"; "between_tools" is its way of answering without a thinking pause.
@@ -395,7 +475,8 @@ enum Engine {
             // Keep the blank space around the message exactly as it was typed.
             let lead = String(text.prefix(while: { $0.isWhitespace }))
             let trail = String(text.reversed().prefix(while: { $0.isWhitespace }).reversed())
-            done(.success(lead + out + trail))
+            // Safety net: a typo you are known to make (seen twice or taught) is fixed even if the model let it through.
+            done(.success(lead + Learned.apply(out) + trail))
         }.resume()
     }
 
@@ -858,6 +939,9 @@ enum Focus {
 /// Click it to untangle that text.
 final class BubbleView: NSView {
     var onClick: (() -> Void)?
+    var onTeach: (() -> Void)?
+    private var holdTimer: Timer?
+    private var menuShown = false
     private let icon = NSImageView()
     var working = false { didSet { icon.image = BubbleView.symbol(working ? "ellipsis" : "scribble.variable"); alphaValue = working ? 0.6 : 1 } }
 
@@ -877,15 +961,34 @@ final class BubbleView: NSView {
         icon.frame = bounds
         icon.imageAlignment = .alignCenter
         addSubview(icon)
-        toolTip = "Untangle this text"
+        toolTip = "Click: untangle this text. Right-click or hold: teach it your corrections"
     }
     required init?(coder: NSCoder) { fatalError() }
     override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) == nil ? nil : self }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func mouseDown(with event: NSEvent) {}
+    override func mouseDown(with event: NSEvent) {
+        menuShown = false
+        holdTimer?.invalidate()
+        holdTimer = Timer.scheduledTimer(withTimeInterval: 0.55, repeats: false) { [weak self] _ in self?.showMenu(event) }
+    }
     override func mouseUp(with event: NSEvent) {
+        holdTimer?.invalidate(); holdTimer = nil
+        if menuShown { menuShown = false; return }
         if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
     }
+    override func rightMouseDown(with event: NSEvent) { showMenu(event) }
+    /// Right-click, or press and hold: Untangle, or teach it from the corrections you made by hand.
+    private func showMenu(_ event: NSEvent) {
+        menuShown = true
+        let menu = NSMenu()
+        let fix = NSMenuItem(title: "Untangle this text", action: #selector(menuFix), keyEquivalent: "")
+        let teach = NSMenuItem(title: "Teach: learn from what I corrected", action: #selector(menuTeach), keyEquivalent: "")
+        fix.target = self; teach.target = self
+        menu.addItem(fix); menu.addItem(teach)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: bounds.maxY + 4), in: self)
+    }
+    @objc private func menuFix() { onClick?() }
+    @objc private func menuTeach() { onTeach?() }
 }
 
 let bubbleSize: CGFloat = 26
@@ -897,7 +1000,7 @@ func bubbleOrigin(for box: NSRect) -> NSPoint {
     return NSPoint(x: box.maxX - bubbleSize - 6, y: y)
 }
 
-func makeBubble(onClick: @escaping () -> Void) -> (NSPanel, BubbleView) {
+func makeBubble(onClick: @escaping () -> Void, onTeach: @escaping () -> Void) -> (NSPanel, BubbleView) {
     let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: bubbleSize, height: bubbleSize),
                         styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     panel.isOpaque = false
@@ -908,6 +1011,7 @@ func makeBubble(onClick: @escaping () -> Void) -> (NSPanel, BubbleView) {
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
     let view = BubbleView(frame: NSRect(x: 0, y: 0, width: bubbleSize, height: bubbleSize))
     view.onClick = onClick
+    view.onTeach = onTeach
     panel.contentView = view
     return (panel, view)
 }
@@ -1195,7 +1299,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard AXIsProcessTrusted() else { bubble?.0.orderOut(nil); return }
         if busy { return }  // stay put while a fix is running
         guard let box = Focus.textFrame() else { bubble?.0.orderOut(nil); return }
-        if bubble == nil { bubble = makeBubble { [weak self] in self?.trigger() } }
+        if bubble == nil { bubble = makeBubble(onClick: { [weak self] in self?.trigger() }, onTeach: { [weak self] in self?.teach() }) }
         guard let panel = bubble?.0 else { return }
         let origin = bubbleOrigin(for: box)
         if abs(panel.frame.origin.x - origin.x) > 0.5 || abs(panel.frame.origin.y - origin.y) > 0.5 { panel.setFrameOrigin(origin) }
@@ -1278,7 +1382,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add(AXIsProcessTrusted() ? "Click the red squiggle in your text box, or press ⌃⌥U" : "Select text, then press ⇧⌘U (or right-click > Services)", nil)
         add("Show an example", #selector(example))
         menu.addItem(.separator())
-        add(Engine.smart ? "Smart mode is on (Claude Sonnet)" : "Basic mode: spelling only, offline", nil)
+        add(Engine.smart ? "Smart mode is on (Claude Haiku)" : "Basic mode: spelling only, offline", nil)
         if Engine.smart {
             add("Remove Claude key (back to basic mode)", #selector(removeKey))
         } else {
@@ -1334,12 +1438,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// The last text that was untangled: what you typed and what came back. Kept in memory only.
+    private var lastRun: (typed: String, untangled: String, at: Date)?
+
+    /// You untangled a text, corrected the result by hand, and now show it the final version.
+    @objc func teach() {
+        guard !busy else { Toast.show("Still working on the last one…"); return }
+        guard AXIsProcessTrusted() else { Toast.show("Teaching needs the Accessibility permission"); return }
+        guard let last = lastRun, Date().timeIntervalSince(last.at) < 3600 else {
+            Log.add("teach: nothing untangled recently")
+            return Toast.show("Untangle a text first, correct it, then teach")
+        }
+        let app = NSWorkspace.shared.frontmostApplication
+        if app?.processIdentifier == ProcessInfo.processInfo.processIdentifier { return Toast.show("Click into your text first") }
+        busy = true
+        Grabber.grab { final in
+            self.busy = false
+            guard let final = final, !isBlank(final) else { Log.add("teach: grabbed nothing"); return Toast.show("I couldn't read the text") }
+            let a = Set(tokenize(last.untangled).filter { $0.count > 2 }), b = Set(tokenize(final).filter { $0.count > 2 })
+            guard !a.isEmpty, Double(a.intersection(b).count) / Double(a.count) > 0.5 else {
+                Log.add("teach: text does not look like the last untangled one")
+                return Toast.show("This is not the text I last untangled")
+            }
+            if final == last.untangled { Log.add("teach: no changes"); return Toast.show("You changed nothing, so nothing to learn") }
+            let lessons = Lessons.record(untangled: last.untangled, corrected: final)
+            let words = Learned.teach(last.typed, final)
+            self.lastRun = (last.typed, final, last.at)
+            Log.add("teach: \(lessons) lessons, \(words) words, from \(app?.localizedName ?? "?")")
+            Toast.show(lessons + words == 0 ? "Nothing new to learn" : "Learned \(lessons) correction\(lessons == 1 ? "" : "s") ✓")
+            NSSound(named: "Pop")?.play()
+        }
+    }
+
     private func run(_ text: String, target: NSRunningApplication?) {
         generation += 1
         let mine = generation
         let quiet = instant && target != nil
         if !quiet { review.begin(original: text, target: target) }
         Engine.correct(text) { corrected, note in
+            if target != nil { self.lastRun = (text, corrected, Date()) }
             guard mine == self.generation else { Log.add("result dropped: cancelled meanwhile"); return }  // cancelled meanwhile
             if quiet {
                 self.busy = false
@@ -1374,7 +1511,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func enterKey() {
         let alert = NSAlert()
         alert.messageText = "Turn on Smart mode"
-        alert.informativeText = "Right now Untangle only fixes simple spelling. Smart mode also fixes grammar and tangled sentences, in English and German, by sending the text you untangle to Claude Sonnet. Paste a Claude API key (it starts with sk-ant-). The key is kept in your Mac's Keychain. Cost is tiny: roughly a third of a cent per message."
+        alert.informativeText = "Right now Untangle only fixes simple spelling. Smart mode also fixes grammar and tangled sentences, in English and German, by sending the text you untangle to Claude Haiku. Paste a Claude API key (it starts with sk-ant-). The key is kept in your Mac's Keychain. Cost is tiny: roughly one cent per 50 messages."
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
         field.placeholderString = "sk-ant-…"
         alert.accessoryView = field
@@ -1493,6 +1630,13 @@ if args.count >= 2, args[1] == "--selftest" {
         Engine.claude("teh test", key: "invalid-key-for-connection-check") { r in print("\nAPI: \(r)"); sem.signal() }
         sem.wait()
     }
+    exit(0)
+}
+if args.count >= 5, args[1] == "--teachtest" {
+    // typed, untangled, corrected-by-hand -> shows what would be learned and sent along. For testing (set UNTANGLE_LEARNED and UNTANGLE_LESSONS).
+    print("lessons:", Lessons.record(untangled: args[3], corrected: args[4]), "| words:", Learned.teach(args[2], args[4]))
+    print(Lessons.hints)
+    print(Learned.hints)
     exit(0)
 }
 if args.count >= 4, args[1] == "--learntest" {

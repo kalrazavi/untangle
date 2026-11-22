@@ -15,6 +15,10 @@ I type fast and messy, in English and German, often inside one sentence. Every w
 
 I did not want an editor. I wanted a proofreader that knows exactly where its job ends.
 
+## Teach it
+
+When a result is not quite right, correct it by hand, then right-click the squiggle (or press and hold it) and choose **Teach**. Untangle compares its own result with your corrected version and keeps every difference as a lesson, with a few words around it. The lessons are sent along with each later request, so the same mistake is not made twice, and the typos behind them go into your word list with extra weight. Lessons live in `~/Library/Application Support/Untangle/lessons.json`.
+
 ## It learns your typos
 
 Every time Untangle fixes a word that is not a real word in English or German (`teh`, `woring`, `shicken`), it notes what you meant. That personal word list is sent along as hints with the next request, so the proofreader recognises your usual slips straight away, and typos seen at least twice are also fixed offline, without the AI.
@@ -40,7 +44,7 @@ Every time Untangle fixes a word that is not a real word in English or German (`
 ## How it works
 
 1. **Find the text.** macOS Accessibility locates the text box in focus, in any app. Password fields are never read.
-2. **Proofread.** In Smart mode the text goes to Claude (Anthropic's Sonnet model) together with the proofread-only rulebook.
+2. **Proofread.** In Smart mode the text goes to Claude (Anthropic's small, fast Haiku model) together with the proofread-only rulebook.
 3. **Compare.** The app works out word by word what changed, so it can show you each change.
 4. **Paste back.** The corrected text replaces the original.
 
