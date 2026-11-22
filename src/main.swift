@@ -175,6 +175,134 @@ Language: the writer is bilingual and writes English, German, or both mixed toge
 If a sentence is already correct, return it character for character. If nothing needs fixing, return the text unchanged. Output only the corrected text, with no tags, quotation marks, comments or explanations.
 """
 
+/// A small diary of what the app did (never the text itself), so "nothing happened" can be explained:
+/// ~/Library/Logs/Untangle.log
+enum Log {
+    private static let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Untangle.log")
+    private static let stamp: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"; return f }()
+    static func add(_ line: String) {
+        let data = Data("\(stamp.string(from: Date())) \(line)\n".utf8)
+        if let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int, size > 300_000 {
+            try? FileManager.default.removeItem(at: url)
+        }
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(data); try? h.close() }
+        else { try? data.write(to: url) }
+    }
+}
+
+/// Your own word list ("Wortschatz"): typos you keep making and what you meant, learned from the
+/// corrections. It lives only on this Mac, as a plain file you can read, edit or delete:
+/// ~/Library/Application Support/Untangle/learned.json
+enum Learned {
+    struct Entry: Codable { var to: String; var n: Int; var other: Int }   // other = times it was corrected to something else
+    private static let url: URL = {
+        if let test = ProcessInfo.processInfo.environment["UNTANGLE_LEARNED"] { return URL(fileURLWithPath: test) }   // for tests only
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Untangle/learned.json")
+    }()
+    private static var cache: [String: Entry]?
+    static var all: [String: Entry] {
+        if cache == nil {
+            cache = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([String: Entry].self, from: $0) } ?? [:]
+        }
+        return cache ?? [:]
+    }
+    /// Typos seen with one clear meaning.
+    static var usable: [(String, Entry)] { all.filter { $0.value.n > 2 * $0.value.other }.sorted { $0.value.n > $1.value.n }.map { ($0.key, $0.value) } }
+    static var count: Int { usable.count }
+
+    private static func isWord(_ t: String) -> Bool { t.count >= 3 && t.count <= 30 && t.allSatisfy { $0.isLetter || $0 == "'" || $0 == "’" } }
+
+    /// True when a word is in neither the English nor the German dictionary, so it is a typo and not a real word used wrongly.
+    private static func notAWord(_ word: String) -> Bool {
+        let checker = NSSpellChecker.shared
+        let have = checker.availableLanguages
+        let en = have.first { $0 == "en" } ?? have.first { $0.hasPrefix("en") } ?? "en"
+        let de = have.first { $0 == "de" } ?? have.first { $0.hasPrefix("de") } ?? "de"
+        func wrong(_ lang: String) -> Bool {
+            checker.checkSpelling(of: word, startingAt: 0, language: lang, wrap: false, inSpellDocumentWithTag: 0, wordCount: nil).location != NSNotFound
+        }
+        return wrong(en) && wrong(de)
+    }
+
+    /// Looks at one finished correction and remembers every one-word typo in it. Call on the main thread.
+    @discardableResult static func record(_ before: String, _ after: String) -> Int {
+        var book = all, added = 0
+        for piece in diffPieces(before, after) {
+            guard case .change(let o, let r) = piece, isWord(o), isWord(r) else { continue }
+            let key = o.lowercased()
+            guard key != r.lowercased(), notAWord(o) else { continue }   // skip capital-letter fixes and real words
+            if var e = book[key] {
+                if e.to.lowercased() == r.lowercased() { e.n += 1 } else { e.other += 1 }
+                book[key] = e
+            } else {
+                book[key] = Entry(to: r, n: 1, other: 0)
+            }
+            added += 1
+        }
+        guard added > 0 else { return 0 }
+        cache = book
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let d = try? enc.encode(book) { try? d.write(to: url, options: .atomic) }
+        return added
+    }
+
+    /// Lines for the proofreader: the typos you make most, as hints for what a garbled word means.
+    static var hints: String {
+        let top = usable.prefix(120)
+        guard !top.isEmpty else { return "" }
+        return "\n\nThis writer's own recurring typos, learned from earlier corrections (typed → meant). Use them as strong hints for what a garbled or similar-looking word is meant to be, but still judge from the context:\n"
+            + top.map { "\($0.0) → \($0.1.to)" }.joined(separator: "\n")
+    }
+
+    /// Fixes typos seen at least twice, without the internet. Used when Smart mode is off.
+    static func apply(_ text: String) -> String {
+        let book = all
+        guard !book.isEmpty else { return text }
+        return tokenize(text).map { t -> String in
+            guard let e = book[t.lowercased()], e.n > 2 * e.other, e.n >= 2 else { return t }
+            if let f = t.first, f.isUppercase, let rf = e.to.first { return String(rf).uppercased() + e.to.dropFirst() }
+            return e.to
+        }.joined()
+    }
+}
+
+/// A short note next to the mouse, so a click on the button always gets an answer.
+enum Toast {
+    private static var panel: NSPanel?
+    private static var serial = 0
+    static func show(_ text: String) {
+        serial += 1
+        let mine = serial
+        panel?.orderOut(nil)
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = .white
+        label.sizeToFit()
+        let size = NSSize(width: label.frame.width + 24, height: 28)
+        let p = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = true; p.level = .statusBar; p.ignoresMouseEvents = true
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        let box = NSView(frame: NSRect(origin: .zero, size: size))
+        box.wantsLayer = true
+        box.layer?.backgroundColor = NSColor(calibratedRed: 0.09, green: 0.10, blue: 0.15, alpha: 0.96).cgColor
+        box.layer?.cornerRadius = 14
+        label.frame.origin = NSPoint(x: 12, y: (size.height - label.frame.height) / 2)
+        box.addSubview(label)
+        p.contentView = box
+        let m = NSEvent.mouseLocation
+        var origin = NSPoint(x: m.x - size.width - 14, y: m.y + 14)
+        if let vis = (NSScreen.screens.first { $0.frame.contains(m) } ?? NSScreen.main)?.visibleFrame {
+            origin.x = min(max(origin.x, vis.minX + 6), vis.maxX - size.width - 6)
+            origin.y = min(max(origin.y, vis.minY + 6), vis.maxY - size.height - 6)
+        }
+        p.setFrameOrigin(origin)
+        p.orderFrontRegardless()
+        panel = p
+        after(1.8) { if mine == serial { panel?.orderOut(nil); panel = nil } }
+    }
+}
+
 enum Engine {
     /// The proofreading instructions. A text file here overrides the built-in ones, so they can be
     /// tuned without rebuilding the app: ~/Library/Application Support/Untangle/prompt.txt
@@ -195,8 +323,13 @@ enum Engine {
         claude(text, key: key) { result in
             DispatchQueue.main.async {
                 switch result {
-                case .success(let s): done(s, "Smart mode")
-                case .failure(let e): done(text, "Smart mode failed: \(e.message). Nothing was changed.")
+                case .success(let s):
+                    let n = Learned.record(text, s)
+                    Log.add("smart ok: \(text.count) chars, \(s == text ? "unchanged" : "changed"), learned \(n)")
+                    done(s, "Smart mode")
+                case .failure(let e):
+                    Log.add("smart FAILED: \(e.message)")
+                    done(text, "Smart mode failed: \(e.message). Nothing was changed.")
                 }
             }
         }
@@ -215,7 +348,7 @@ enum Engine {
             "model": model,
             "max_tokens": 16000,
             "thinking": ["type": "disabled"],
-            "system": prompt,
+            "system": prompt + Learned.hints,
             "messages": [["role": "user", "content": "<text>\n\(text)\n</text>"]],
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -248,7 +381,8 @@ enum Engine {
 
     /// Offline check with the Mac's own spell checker: spelling only, nothing leaves the computer.
     /// A word counts as a mistake only if it is wrong in both English and German.
-    static func basic(_ text: String) -> String {
+    static func basic(_ raw: String) -> String {
+        let text = Learned.apply(raw)
         let checker = NSSpellChecker.shared
         let tag = NSSpellChecker.uniqueSpellDocumentTag()
         defer { checker.closeSpellDocument(withTag: tag) }
@@ -635,7 +769,7 @@ final class ReviewController: NSObject, NSWindowDelegate {
 // MARK: - Finding the text box you are typing in ----------------------------------------------
 
 enum Focus {
-    private static var prepared = Set<pid_t>()
+    private static var prepared = [pid_t: Int]()
     static var lastInfo = ""
 
     private static func attr(_ e: AXUIElement, _ name: String) -> CFTypeRef? {
@@ -652,11 +786,16 @@ enum Focus {
         let pid = front.processIdentifier
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.25)
-        if !prepared.contains(pid) {
-            prepared.insert(pid)
-            AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        let tries = prepared[pid] ?? 0
+        if tries < 40 {   // keep asking for a while: a browser that is still starting up does not answer the first time
+            prepared[pid] = tries + 1
+            let ok = AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue) == .success
+            // Chrome-family browsers only build their page tree for this older switch.
+            let chromeLike = ["com.google.Chrome", "com.brave.Browser", "com.microsoft.edgemac", "org.chromium.Chromium"].contains(front.bundleIdentifier ?? "")
+            if chromeLike { AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue) }
+            if ok && !chromeLike { prepared[pid] = 40 }
         }
-        if let f = attr(app, kAXFocusedUIElementAttribute as String) { return (f as! AXUIElement) }
+        if let f = attr(app, kAXFocusedUIElementAttribute as String) { prepared[pid] = 40; return (f as! AXUIElement) }
         return nil
     }
 
@@ -757,6 +896,7 @@ final class PanelModel: ObservableObject {
     @Published var review = false
     @Published var login = false
     @Published var count = 0
+    @Published var learned = 0
     func refresh() {
         let d = UserDefaults.standard
         smart = Engine.smart
@@ -765,6 +905,7 @@ final class PanelModel: ObservableObject {
         review = !d.bool(forKey: "instant")
         login = SMAppService.mainApp.status == .enabled
         count = d.integer(forKey: "fixCount")
+        learned = Learned.count
     }
 }
 
@@ -840,7 +981,7 @@ struct Card: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(m.count == 0 ? "Ready when you are" : "\(m.count) text\(m.count == 1 ? "" : "s") untangled")
                         .font(.system(size: 12, weight: .medium)).foregroundColor(m.smart ? coral : .white.opacity(0.5))
-                    Text(m.smart ? "English, German, or both at once" : "Spelling only. Tap to add a key")
+                    Text(m.learned > 0 ? "Knows \(m.learned) of your usual typos" : (m.smart ? "English, German, or both at once" : "Spelling only. Tap to add a key"))
                         .font(.system(size: 10.5)).foregroundColor(.white.opacity(0.42))
                 }
                 Spacer()
@@ -1048,7 +1189,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             _ = done.wait(timeout: .now() + 25)
         }
-        if let r = result, r != text { countFix() }
+        if let r = result, r != text { countFix(); Learned.record(text, r) }
+        Log.add("service: \(text.count) chars, \(result == nil ? "no answer" : (result == text ? "unchanged" : "changed"))")
         pboard.clearContents()
         pboard.setString(result ?? (Keychain.key == nil ? Engine.basic(text) : text), forType: .string)
         if Keychain.key == nil && !nudged { nudged = true; after(0.8) { self.enterKey() } }
@@ -1137,14 +1279,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func trigger() {
-        guard !busy else { return }
+        guard !busy else { Log.add("click ignored: still working on the last one"); Toast.show("Still working on the last one…"); return }
         guard AXIsProcessTrusted() else {
+            Log.add("click: Accessibility permission missing")
             return review.message("Select the text you want fixed (Command + A selects everything), then press Command + Shift + U, or right-click it and choose Services > Untangle.\n\nThis shortcut and the floating button need the Accessibility permission, which is optional. The menu bar icon has the option to allow it.")
         }
         let app = NSWorkspace.shared.frontmostApplication
-        if app?.processIdentifier == ProcessInfo.processInfo.processIdentifier { return }
+        if app?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+            Log.add("click ignored: Untangle itself is the front app"); Toast.show("Click into your text first"); return
+        }
+        Log.add("click: front app \(app?.localizedName ?? "?")")
         busy = true
         Grabber.grab { text in
+            Log.add("grab: \(text.map { "\($0.count) chars" } ?? "nothing")")
             guard let text = text, !isBlank(text) else {
                 self.busy = false
                 return self.review.message("I couldn't grab any text. Click into the box you are typing in (or select the part you want checked), then press Control + Option + U again.")
@@ -1163,11 +1310,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let quiet = instant && target != nil
         if !quiet { review.begin(original: text, target: target) }
         Engine.correct(text) { corrected, note in
-            guard mine == self.generation else { return }  // cancelled meanwhile
+            guard mine == self.generation else { Log.add("result dropped: cancelled meanwhile"); return }  // cancelled meanwhile
             if quiet {
                 self.busy = false
-                if corrected != text { Grabber.paste(corrected, into: target); self.countFix() }
-                if note.hasPrefix("Smart mode failed") { self.review.message(note) }
+                if corrected != text {
+                    Grabber.paste(corrected, into: target); self.countFix()
+                    let n = diffPieces(text, corrected).filter { if case .change = $0 { return true }; return false }.count
+                    Toast.show("Fixed \(n) thing\(n == 1 ? "" : "s") ✓")
+                    Log.add("pasted fix into \(target?.localizedName ?? "?")")
+                } else if note.hasPrefix("Smart mode failed") { self.review.message(note) }
+                else { Toast.show("Nothing to fix ✓") }
                 NSSound(named: corrected != text ? "Pop" : "Tink")?.play()
             } else {
                 self.review.show(pieces: diffPieces(text, corrected), note: note)
@@ -1311,6 +1463,13 @@ if args.count >= 2, args[1] == "--selftest" {
         Engine.claude("teh test", key: "invalid-key-for-connection-check") { r in print("\nAPI: \(r)"); sem.signal() }
         sem.wait()
     }
+    exit(0)
+}
+if args.count >= 4, args[1] == "--learntest" {
+    // Records one before/after pair into the word list and shows what it now knows. For testing (set UNTANGLE_LEARNED).
+    print("learned now:", Learned.record(args[2], args[3]))
+    print("usable:", Learned.usable.map { "\($0.0)→\($0.1.to) x\($0.1.n)" }.joined(separator: ", "))
+    print("offline fix of the same text:", Engine.basic(args[2]))
     exit(0)
 }
 if args.count >= 2, args[1] == "--fixtest" {

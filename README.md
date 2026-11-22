@@ -15,6 +15,14 @@ I type fast and messy, in English and German, often inside one sentence. Every w
 
 I did not want an editor. I wanted a proofreader that knows exactly where its job ends.
 
+## It learns your typos
+
+Every time Untangle fixes a word that is not a real word in English or German (`teh`, `woring`, `shicken`), it notes what you meant. That personal word list is sent along as hints with the next request, so the proofreader recognises your usual slips straight away, and typos seen at least twice are also fixed offline, without the AI.
+
+- The list is a plain file on your Mac: `~/Library/Application Support/Untangle/learned.json`. Read it, edit it or delete it.
+- Real words used wrongly (`their` / `there`) are never learned, because they depend on the sentence.
+- A click always gets an answer: a small note says "Fixed 3 things", "Nothing to fix" or "Still working". A diary of what happened (never the text itself) is in `~/Library/Logs/Untangle.log`.
+
 ## What it does
 
 - A small squiggle button sits inside whatever text box you are typing in. One click and the text is corrected in place, in about a second per sentence.
