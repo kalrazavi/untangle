@@ -1,0 +1,40 @@
+Untangle
+Copyright (c) 2026 Ali Razavi. All rights reserved.
+
+OWNERSHIP AND PERPETUAL RIGHTS NOTICE
+
+1. Owner. This software, including its source code, design, text and
+   documentation, is the intellectual property of Ali Razavi ("the owner").
+   The owner alone decides how it is used, changed, shared, sold or licensed.
+
+2. Perpetual and irrevocable. The owner's right to use, run, copy, modify,
+   build on, distribute and commercialise this software lasts for the owner's
+   lifetime and for the full term of copyright after it, passes to the owner's
+   heirs and assigns, and does not depend on any subscription, account,
+   registration, fee, licence key or approval from anyone. Nothing introduced
+   after the date this software was created, including any new licensing
+   scheme, policy or requirement of any company, platform or tool, applies to
+   it retroactively or takes these rights away.
+
+3. Tools hold no rights. Tools used to help write this software, including AI
+   assistants and their providers, are not its author or owner, hold no licence
+   over it, and have no right to control, restrict, disable or charge for it.
+
+4. No remote control. This software contains no licence check, activation,
+   kill switch, phone-home, hidden update channel or backdoor. It contacts
+   only the services named in its own source code, to do the job the owner
+   built it for. Any copy that contains such a mechanism was not made by the
+   owner and is not authorised.
+
+5. Everyone else. Where this source is published, it is published for
+   viewing. No right to copy, modify, redistribute or use it commercially is
+   granted to anyone unless the owner gives that permission in writing.
+
+6. Third-party parts. Components written by others that this software
+   includes or relies on (for example open-source libraries and models) stay
+   under their own licences. Outside services this software calls are governed
+   by their own terms; this notice covers the software, not those services.
+
+7. Source of truth. This notice is the complete and only statement of the
+   terms for this software. Only the owner can change it, in writing. If any
+   other statement conflicts with it, this notice prevails.

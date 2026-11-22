@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Ali Razavi. All rights reserved. Owned and controlled solely by Ali Razavi: no licence check, no remote control, no backdoor. Terms: see the LICENSE file.
 // Untangle - a menu bar proofreader that fixes mistakes without touching your tone.
 // Press Control+Option+U in any app: it grabs your text (the selection, or everything
 // in the field), finds the mistakes, and shows them underlined in red for review.

@@ -1,4 +1,5 @@
 #!/bin/zsh
+# Copyright (c) 2026 Ali Razavi. All rights reserved. Owned and controlled solely by Ali Razavi: no licence check, no remote control, no backdoor. Terms: see the LICENSE file.
 # Rebuilds Untangle.app from src/main.swift and installs it in /Applications.
 # Note: after a rebuild, macOS asks again for the Accessibility permission.
 set -e
@@ -19,6 +20,7 @@ cat > "$APP/Contents/Info.plist" <<'P'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
+<key>NSHumanReadableCopyright</key><string>Copyright (c) 2026 Ali Razavi. All rights reserved.</string>
 <key>CFBundleName</key><string>Untangle</string>
 <key>CFBundleDisplayName</key><string>Untangle</string>
 <key>CFBundleIdentifier</key><string>local.untangle</string>
