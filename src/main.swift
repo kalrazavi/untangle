@@ -115,37 +115,77 @@ func diffPieces(_ a: String, _ b: String) -> [Piece] {
 // MARK: - Correction engines ----------------------------------------------------------
 
 enum Keychain {
-    private static let base: [String: Any] = [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: "local.untangle",
-        kSecAttrAccount as String: "claude-api-key",
-    ]
+    // The key is stored once per build: account "claude-api-key@<this build's code hash>". macOS only lets the build that
+    // created a Keychain entry read it without asking (twice: access list + partition list), and "Allow" is forgotten at the
+    // next start. So when this build has no entry yet, it reads the newest older one (the last time it asks) and saves its own.
+    private static let service = "local.untangle"
+    private static let legacyAccount = "claude-api-key"
     private static var loaded = false
     private static var cache: String?
+    private static let lock = NSLock()   // one keychain read per launch, even when two parts of the app ask at once
+
+    private static let ownAccount: String = {
+        var code: SecCode?; var staticCode: SecStaticCode?; var info: CFDictionary?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let c = code,
+              SecCodeCopyStaticCode(c, [], &staticCode) == errSecSuccess, let sc = staticCode,
+              SecCodeCopySigningInformation(sc, [], &info) == errSecSuccess,
+              let d = (info as? [String: Any])?[kSecCodeInfoUnique as String] as? Data else { return legacyAccount }
+        return legacyAccount + "@" + d.map { String(format: "%02x", $0) }.joined()
+    }()
+
+    private static func query(_ account: String?) -> [String: Any] {
+        var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service]
+        if let a = account { q[kSecAttrAccount as String] = a }
+        return q
+    }
+    private static func read(_ account: String) -> String? {
+        var q = query(account)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
+        return String(data: d, encoding: .utf8)
+    }
+    /// Names of all stored entries, newest first. Reading names never asks for the password.
+    private static func accounts() -> [String] {
+        var q = query(nil)
+        q[kSecReturnAttributes as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitAll
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let items = out as? [[String: Any]] else { return [] }
+        return items.sorted { (($0[kSecAttrModificationDate as String] as? Date) ?? .distantPast) > (($1[kSecAttrModificationDate as String] as? Date) ?? .distantPast) }
+                    .compactMap { $0[kSecAttrAccount as String] as? String }
+    }
+    private static func add(_ s: String) {
+        var q = query(ownAccount)
+        q[kSecValueData as String] = Data(s.utf8)
+        q[kSecAttrLabel as String] = "Untangle"
+        SecItemAdd(q as CFDictionary, nil)
+    }
 
     static var key: String? {
         if ProcessInfo.processInfo.environment["UNTANGLE_NOKEY"] != nil { return nil }   // for tests only: never touch the keychain
+        lock.lock(); defer { lock.unlock() }
         if !loaded {
-            var q = base
-            q[kSecReturnData as String] = true
-            q[kSecMatchLimit as String] = kSecMatchLimitOne
-            var out: CFTypeRef?
-            if SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data {
-                cache = String(data: d, encoding: .utf8)
+            let names = accounts()
+            if names.contains(ownAccount) {
+                cache = read(ownAccount)
+            } else if let older = names.first, let s = read(older) {
+                cache = s
+                add(s)
+                Log.add("keychain: saved the key for this build")
             }
             loaded = true
         }
         return cache
     }
     static func save(_ s: String) {
-        SecItemDelete(base as CFDictionary)
-        var q = base
-        q[kSecValueData as String] = Data(s.utf8)
-        SecItemAdd(q as CFDictionary, nil)
+        SecItemDelete(query(ownAccount) as CFDictionary)
+        add(s)
         cache = s; loaded = true
     }
     static func clear() {
-        SecItemDelete(base as CFDictionary)
+        for a in accounts() { SecItemDelete(query(a) as CFDictionary) }
         cache = nil; loaded = true
     }
 }

@@ -1,9 +1,11 @@
 #!/bin/zsh
 # Copyright (c) 2026 Ali Razavi. All rights reserved. Owned and controlled solely by Ali Razavi: no licence check, no remote control, no backdoor. Terms: see the LICENSE file.
 # Rebuilds Untangle.app from src/main.swift and installs it in /Applications.
-# Note: after a rebuild, macOS asks again for the Accessibility permission.
+# Signing: with the owner's own local certificate ("Ali Razavi Local Code Signing", login keychain) macOS sees every rebuild
+# as the same app, so the Accessibility switch stays on. Without it (another Mac): ad hoc.
 set -e
 cd "$(dirname "$0")"
+SIGN="-"; security find-identity -p codesigning 2>/dev/null | grep -q "Ali Razavi Local Code Signing" && SIGN="Ali Razavi Local Code Signing"
 mkdir -p build preview
 swiftc -swift-version 5 -O -o build/Untangle src/main.swift -framework AppKit -framework Carbon -framework Security -framework ServiceManagement -framework SwiftUI
 ./build/Untangle --render "$PWD/preview"
@@ -44,7 +46,7 @@ cat > "$APP/Contents/Info.plist" <<'P'
 </dict></array>
 </dict></plist>
 P
-codesign --force --sign - "$APP"
+codesign --force --sign "$SIGN" "$APP"
 pkill -x Untangle 2>/dev/null || true
 rm -rf "/Applications/Untangle.app"
 cp -R "$APP" "/Applications/Untangle.app"
