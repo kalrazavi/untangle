@@ -6,6 +6,12 @@ Dates are when the change went live. Commit IDs link each entry to the code.
 
 ---
 
+## v1.6 · 25 Nov 2026 · Show in menu bar, on or off
+`TBD`
+
+### Added
+- **"Show in menu bar" tick box.** I wanted the menu bar to stay tidy, so the icon can now be switched off; Untangle then opens from Applications. It is on by default and takes effect at once, without a restart. With the icon off, the settings card opens as a small window whenever I open Untangle again from Applications or Spotlight, and a line on the card says how to get back to it. The squiggle's right-click menu also has "Settings…" now, which opens the card either way. Starting at login stays silent in both cases.
+
 ## v1.5 · 25 Nov 2026 · No more password prompts at start-up
 `8a62f9d`
 

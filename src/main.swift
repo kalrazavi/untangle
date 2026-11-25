@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Ali Razavi. All rights reserved. Owned and controlled solely by Ali Razavi: no licence check, no remote control, no backdoor. Terms: see the LICENSE file.
-// Untangle - a menu bar proofreader that fixes mistakes without touching your tone.
+// Untangle - a proofreader that fixes mistakes without touching your tone. Lives in the menu bar, or out of sight ("Show in menu bar" off).
 // Press Control+Option+U in any app: it grabs your text (the selection, or everything
 // in the field), finds the mistakes, and shows them underlined in red for review.
 import AppKit
@@ -1023,8 +1023,9 @@ final class BubbleView: NSView {
         let menu = NSMenu()
         let fix = NSMenuItem(title: "Untangle this text", action: #selector(menuFix), keyEquivalent: "")
         let teach = NSMenuItem(title: "Teach: learn from what I corrected", action: #selector(menuTeach), keyEquivalent: "")
-        fix.target = self; teach.target = self
-        menu.addItem(fix); menu.addItem(teach)
+        let settings = NSMenuItem(title: "Settings…", action: #selector(AppDelegate.showPanel), keyEquivalent: "")
+        fix.target = self; teach.target = self; settings.target = NSApp.delegate
+        menu.addItem(fix); menu.addItem(teach); menu.addItem(.separator()); menu.addItem(settings)
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: bounds.maxY + 4), in: self)
     }
     @objc private func menuFix() { onClick?() }
@@ -1056,9 +1057,11 @@ func makeBubble(onClick: @escaping () -> Void, onTeach: @escaping () -> Void) ->
     return (panel, view)
 }
 
-// MARK: - Menu bar panel ---------------------------------------------------------------------
+// MARK: - Settings card ---------------------------------------------------------------------
 
 let coral = Color(red: 1.0, green: 0.36, blue: 0.33)
+/// UserDefaults key for "Show in menu bar". On by default.
+let menuBarKey = "showMenuBarIcon"
 
 final class PanelModel: ObservableObject {
     @Published var smart = false
@@ -1066,6 +1069,7 @@ final class PanelModel: ObservableObject {
     @Published var bubble = true
     @Published var review = false
     @Published var login = false
+    @Published var menuBar = true
     @Published var count = 0
     @Published var learned = 0
     func refresh() {
@@ -1075,6 +1079,7 @@ final class PanelModel: ObservableObject {
         bubble = d.bool(forKey: "bubble")
         review = !d.bool(forKey: "instant")
         login = SMAppService.mainApp.status == .enabled
+        menuBar = d.object(forKey: menuBarKey) as? Bool ?? true
         count = d.integer(forKey: "fixCount")
         learned = Learned.count
     }
@@ -1173,6 +1178,13 @@ struct Card: View {
                 CheckRow(on: m.bubble, label: "Squiggle button in my text boxes") { act("bubble") }
                 CheckRow(on: m.review, label: "Show me the changes before pasting") { act("review") }
                 CheckRow(on: m.login, label: "Open at login") { act("login") }
+                CheckRow(on: m.menuBar, label: "Show in menu bar") { act("menubar") }
+                if !m.menuBar {
+                    Text("Hidden. Open Untangle from Applications to get back here.")
+                        .font(.system(size: 10.5)).foregroundColor(coral.opacity(0.9))
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 24)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Text("Click the squiggle, or select text and press ⇧⌘U.")
                 .font(.system(size: 10.5)).foregroundColor(.white.opacity(0.42)).fixedSize(horizontal: false, vertical: true)
@@ -1235,7 +1247,6 @@ let sampleBefore = "hey sorry for teh late reply, i was meaning to get back to y
 let sampleAfter = "hey sorry for the late reply, i was meaning to get back to you yesterday but i completely forgot. Can we move our call to thursday? there are a few things i want to go over\n\nIch hab dir die Datei gestern schon geschickt, hast du die bekommen? Wir müssen das bis Freitag fertig haben, sonst wird es eng, weil der Kunde am Montag die Präsentation sehen will"
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private var statusItem: NSStatusItem!
     private var hotKey: EventHotKeyRef?
     private let review = ReviewController()
     private var busy = false { didSet { showBusy() } }
@@ -1247,22 +1258,105 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func showBusy() {
-        let img = NSImage(systemSymbolName: busy ? "ellipsis" : "scribble.variable", accessibilityDescription: "Untangle")
-        img?.isTemplate = true
-        statusItem?.button?.image = img
+        statusItem?.button?.image = statusImage()
         bubble?.1.working = busy
     }
 
     private var tracker: Timer?
-    private let popover = NSPopover()
     private let model = PanelModel()
+    private func makeCard() -> NSHostingController<Card> {
+        NSHostingController(rootView: Card(m: model) { [weak self] name in self?.panelAction(name) })
+    }
 
+    // The settings card has two homes. "Show in menu bar" on: a popover under the menu bar icon.
+    // Off: no icon, and the card is a small window that opens when Untangle is opened from
+    // Applications (or Spotlight). The squiggle's right-click menu > Settings… opens it either way.
+    private var statusItem: NSStatusItem?
+    private let popover = NSPopover()
+    private var panel: NSPanel?
+
+    private func statusImage() -> NSImage? {
+        let img = NSImage(systemSymbolName: busy ? "ellipsis" : "scribble.variable", accessibilityDescription: "Untangle")
+        img?.isTemplate = true
+        return img
+    }
+
+    /// Adds or removes the menu bar icon to match the setting. Safe to call any time.
+    private func applyMenuBar() {
+        let want = UserDefaults.standard.bool(forKey: menuBarKey)
+        if want, statusItem == nil {
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            item.button?.image = statusImage()
+            item.button?.target = self
+            item.button?.action = #selector(togglePanel)
+            statusItem = item
+            Log.add("menu bar icon: shown")
+        } else if !want, let item = statusItem {
+            let wasOpen = popover.isShown
+            popover.performClose(nil)
+            NSStatusBar.system.removeStatusItem(item)
+            statusItem = nil
+            Log.add("menu bar icon: hidden")
+            // Switched off from the popover itself: carry on in the window, so the "Hidden" note is seen.
+            if wasOpen { showWindow() }
+        }
+        model.refresh()
+    }
+
+    /// A change of the setting (the tick box, or `defaults write` from outside) takes effect at once.
+    override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey: Any]?, context: UnsafeMutableRawPointer?) {
+        guard keyPath == menuBarKey else { return }
+        DispatchQueue.main.async { self.applyMenuBar() }
+    }
+
+    /// Click on the menu bar icon.
     @objc func togglePanel() {
         if popover.isShown { return popover.performClose(nil) }
-        guard let button = statusItem.button else { return }
+        guard let button = statusItem?.button else { return }
         model.refresh()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+    }
+
+    /// Shows the card wherever it lives right now: under the menu bar icon, or as a window.
+    @objc func showPanel() {
+        if statusItem?.button != nil, panel?.isVisible != true {
+            NSApp.activate(ignoringOtherApps: true)
+            if !popover.isShown { togglePanel() }
+        } else {
+            showWindow()
+        }
+    }
+
+    private func showWindow() {
+        model.refresh()
+        if panel == nil {
+            let p = NSPanel(contentViewController: makeCard())
+            p.styleMask = [.titled, .closable, .fullSizeContentView]
+            p.title = "Untangle"
+            p.titleVisibility = .hidden
+            p.titlebarAppearsTransparent = true
+            p.isMovableByWindowBackground = true
+            p.appearance = NSAppearance(named: .darkAqua)
+            p.isReleasedWhenClosed = false
+            p.hidesOnDeactivate = false
+            p.level = .floating
+            p.center()
+            panel = p
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        panel?.makeKeyAndOrderFront(nil)
+    }
+
+    private func closeCard() {
+        popover.performClose(nil)
+        panel?.close()
+    }
+
+    /// Opening Untangle again while it is running (Applications, Spotlight, Launchpad) shows the card.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showPanel()
+        return false
     }
 
     private func panelAction(_ name: String) {
@@ -1270,10 +1364,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "bubble": showBubble.toggle()
         case "review": instant.toggle()
         case "login": toggleLogin()
-        case "key": if !Engine.smart { popover.performClose(nil); enterKey() }
+        case "menubar": UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: menuBarKey), forKey: menuBarKey)
+        case "key": if !Engine.smart { closeCard(); enterKey() }
         case "removeKey": removeKey()
-        case "allow": popover.performClose(nil); showPermission()
-        case "example": popover.performClose(nil); example()
+        case "allow": closeCard(); showPermission()
+        case "example": closeCard(); example()
         case "quit": quit()
         default: break
         }
@@ -1376,18 +1471,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        let img = NSImage(systemSymbolName: "scribble.variable", accessibilityDescription: "Untangle")
-        img?.isTemplate = true
-        statusItem.button?.image = img
-        statusItem.button?.target = self
-        statusItem.button?.action = #selector(togglePanel)
+        UserDefaults.standard.register(defaults: ["instant": true, "bubble": true, menuBarKey: true])
         popover.behavior = .transient
         popover.animates = true
         popover.appearance = NSAppearance(named: .darkAqua)
-        popover.contentViewController = NSHostingController(rootView: Card(m: model) { [weak self] name in self?.panelAction(name) })
+        popover.contentViewController = makeCard()
+        applyMenuBar()
+        UserDefaults.standard.addObserver(self, forKeyPath: menuBarKey, options: [], context: nil)
+        // No menu bar icon and started by hand (not at login): show the card, so opening the app visibly does something.
+        let launch = NSAppleEventManager.shared().currentAppleEvent
+        let atLogin = launch?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+        if statusItem == nil && !atLogin && AXIsProcessTrusted() { after(0.3) { self.showPanel() } }
         buildMainMenu()
-        UserDefaults.standard.register(defaults: ["instant": true, "bubble": true])
         NSApp.servicesProvider = self
         NSUpdateDynamicServices()
         updateBubble()
@@ -1456,7 +1551,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !busy else { Log.add("click ignored: still working on the last one"); Toast.show("Still working on the last one…"); return }
         guard AXIsProcessTrusted() else {
             Log.add("click: Accessibility permission missing")
-            return review.message("Select the text you want fixed (Command + A selects everything), then press Command + Shift + U, or right-click it and choose Services > Untangle.\n\nThis shortcut and the floating button need the Accessibility permission, which is optional. The menu bar icon has the option to allow it.")
+            return review.message("Select the text you want fixed (Command + A selects everything), then press Command + Shift + U, or right-click it and choose Services > Untangle.\n\nThis shortcut and the floating button need the Accessibility permission, which is optional. Open Untangle from Applications for the option to allow it.")
         }
         let app = NSWorkspace.shared.frontmostApplication
         if app?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
@@ -1645,9 +1740,9 @@ if args.count >= 3, args[1] == "--render" {
     renderIcon(args[2] + "/icon_1024.png")
     renderPanel(args[2] + "/panel_dark.png", dark: true)
     renderPanel(args[2] + "/panel_light.png", dark: false)
-    for (name, smart, trusted) in [("card_smart", true, true), ("card_setup", false, false)] {
+    for (name, smart, trusted) in [("card_smart", true, true), ("card_setup", false, false), ("card_hidden", true, true)] {
         let m = PanelModel()
-        m.smart = smart; m.trusted = trusted; m.count = smart ? 37 : 0
+        m.smart = smart; m.trusted = trusted; m.count = smart ? 37 : 0; m.menuBar = name != "card_hidden"
         let host = NSHostingView(rootView: Card(m: m) { _ in })
         host.appearance = NSAppearance(named: .darkAqua)
         host.frame = NSRect(origin: .zero, size: host.fittingSize)

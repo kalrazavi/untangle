@@ -5,7 +5,7 @@
 A Mac menu bar proofreader that corrects what you typed without rewriting how you sound. English, German, or both in the same sentence.
 
 <p>
-  <img src="preview/card_smart.png" width="300" alt="The Untangle menu bar panel">
+  <img src="preview/card_smart.png" width="300" alt="The Untangle settings card">
   <img src="preview/panel_dark.png" width="480" alt="Review mode: each suggested change underlined">
 </p>
 
@@ -33,6 +33,7 @@ Every time Untangle fixes a word that is not a real word in English or German (`
 - A small squiggle button sits inside whatever text box you are typing in. One click and the text is corrected in place, in about a second per sentence.
 - No copying, no pasting, no second window. Or select text anywhere and press **Shift + Command + U**, or use right-click > Services > Untangle.
 - Optional review mode shows every change underlined. Click one to accept it or keep your original.
+- Settings live in a small card under the menu bar icon. **Show in menu bar** is a tick box on that card: switch it off and the icon goes away at once, no restart. Untangle keeps working in the background, and the card then opens whenever you open Untangle from Applications or Spotlight. Right-click the squiggle > Settings… opens it either way.
 
 ## What makes it different
 
