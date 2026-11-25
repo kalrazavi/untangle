@@ -6,6 +6,15 @@ Dates are when the change went live. Commit IDs link each entry to the code.
 
 ---
 
+## v1.5 · 25 Nov 2026 · No more password prompts at start-up
+`8a62f9d`
+
+### Fixed
+- **Untangle asked for my Mac password twice on the first use after every restart.**
+  Noticed: two Keychain prompts every time, even right after a rebuild without restarting.
+  Cause: the Keychain entry holding my Claude key trusted only the very first build that saved it. Every later build counted as a stranger, which gets two prompts (one for the entry, one for its "partition" list), and "Allow" is forgotten when the app quits.
+  Fix: each build now keeps its own copy of the key. A new build asks once, saves its own copy, and is silent from then on. Two parts of the app reading the key at the same moment can no longer cause two prompts. Builds are also signed with my own local certificate, so the Accessibility switch survives rebuilds.
+
 ## v1.4 · 22 Nov 2026 · Teach, and back to the cheaper model
 `5fdd4e7`
 
