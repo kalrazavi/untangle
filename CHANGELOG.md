@@ -6,6 +6,15 @@ Dates are when the change went live. Commit IDs link each entry to the code.
 
 ---
 
+## v1.8 · 26 Nov 2026 · "id" and "ill"
+`c9157e5`
+
+### Fixed
+- **"id say" and "ill call you" sometimes stayed lowercase.**
+  Noticed: after v1.7, "I'd" and "I'll" typed without the apostrophe were only capitalised some of the time.
+  Cause: these two were left to the model alone, because "id" and "ill" are also real words, and the model is not consistent.
+  Fix: the app now decides them itself from the words around them. "id say 20 min" becomes "I'd say 20 min" and "ill call you tomorrow" becomes "I'll call you tomorrow", while "the id on my badge", "im ill today" and "the ill guy" stay as they are.
+
 ## v1.7 · 26 Nov 2026 · Capital "I", and emails about proofreading
 `54678c2`
 
