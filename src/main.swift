@@ -243,6 +243,10 @@ func capitalI(_ text: String) -> String {
         r.processString(t[a...b].joined())
         return r.dominantLanguage == .english && (r.languageHypotheses(withMaximum: 2)[.english] ?? 0) > 0.8
     }
+    // Words that can follow "I'd" / "I'll".
+    let follows: Set<String> = ["say", "like", "love", "rather", "prefer", "suggest", "recommend", "appreciate", "be", "have", "go", "need", "want", "think", "guess", "hope", "expect", "imagine", "argue", "add", "ask", "bet", "call", "send", "check", "do", "get", "let", "see", "tell", "try", "take", "make", "give", "come", "keep", "look", "know", "ping", "text", "write", "email", "mail", "reply", "answer", "talk", "speak", "meet", "join", "bring", "pay", "buy", "start", "stop", "finish", "fix", "update", "share", "show", "help", "leave", "stay", "wait", "handle", "follow", "forward", "book", "schedule", "confirm", "review", "read", "sort", "figure", "find", "put", "use", "work", "run", "explain", "pass", "drop", "grab", "pick", "set", "move", "push", "circle", "reach", "remember", "probably", "definitely", "just", "also", "never", "always", "still", "really", "maybe", "gladly", "happily", "then", "already", "only", "even", "honestly", "actually", "not", "been", "better", "love", "hate", "kill", "die", "turn", "end", "head", "swing", "hit", "manage", "learn", "change", "prepare", "upload", "attach", "post", "deliver", "arrive", "return", "report", "decide", "consider", "appreciate"]
+    // Words before "id" / "ill" that make it the noun or the adjective.
+    let blockers: Set<String> = ["the", "a", "an", "my", "your", "his", "her", "our", "their", "its", "this", "that", "these", "those", "no", "any", "some", "which", "what", "whose", "user", "apple", "login", "account", "order", "customer", "client", "tax", "photo", "student", "employee", "caller", "session", "device", "valid", "fake", "new", "old", "same", "wrong", "right", "unique", "am", "is", "are", "was", "were", "be", "been", "being", "im", "i'm", "i’m", "feel", "feels", "feeling", "felt", "fell", "fall", "got", "get", "gets", "getting", "look", "looks", "seem", "seems", "become", "became", "very", "too", "really", "quite", "pretty", "still", "seriously", "mentally", "critically", "terminally", "physically", "chronically", "gravely", "of", "for", "with"]
     let short: [String: String] = ["i'm": "I'm", "i’m": "I’m", "i've": "I've", "i’ve": "I’ve", "i'll": "I'll", "i’ll": "I’ll", "i'd": "I'd", "i’d": "I’d", "ive": "I've"]
     for i in t.indices {
         let w = t[i]
@@ -261,6 +265,13 @@ func capitalI(_ text: String) -> String {
         } else if let fixed = short[w] {
             if w == "ive", !english(i) { continue }
             t[i] = fixed
+        } else if w == "id" || w == "ill" {
+            // "id say" / "ill call you": the pronoun only when a verb or adverb follows and nothing before it makes it
+            // the noun "ID" or the adjective "ill" ("my id", "the ill guy", "im ill today").
+            guard let n = nextWord(i)?.lowercased(), follows.contains(n) else { continue }
+            if let p = prevWord(i)?.lowercased(), blockers.contains(p) || p.hasSuffix("'s") || p.hasSuffix("’s") { continue }
+            guard english(i) else { continue }
+            t[i] = w == "id" ? "I'd" : "I'll"
         } else if w == "im", let n = nextWord(i), isWord(n), english(i) {
             // German "im" (in dem) is far too common to touch outside a clearly English sentence.
             t[i] = "I'm"
