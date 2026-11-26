@@ -6,6 +6,19 @@ Dates are when the change went live. Commit IDs link each entry to the code.
 
 ---
 
+## v1.7 · 26 Nov 2026 · Capital "I", and emails about proofreading
+`54678c2`
+
+### Fixed
+- **An email came back untouched although it was full of typos.**
+  Noticed: I wrote a fast email in Gmail, clicked the squiggle three times, and nothing visible changed.
+  Cause: the email itself talked about proofreading ("take it and fix it, without changing the meaning of my words"). The model took that as a reason to hold back and returned the whole text as typed. Each paragraph on its own was corrected fine.
+  Fix: the instructions now say that a message about typos or fixing text is still only a message to proofread, and that a text full of garbled words always comes back changed.
+- **"proof read" stayed as two words.** Words typed as two are now joined.
+
+### Added
+- **The pronoun "I" is always a capital.** Also in my all-lowercase chat style: "i think im late, ive got a call" becomes "I think I'm late, I've got a call". It reads the context, so "option i", "i.e.", the German "im", "the id on my badge" and "the ill guy" stay as they are. The model does not follow this every time, so the app also checks the answer itself and capitalises any clear case that slipped through.
+
 ## v1.6 · 25 Nov 2026 · Show in menu bar, on or off
 `0873f1e`
 
