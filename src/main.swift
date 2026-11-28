@@ -981,6 +981,9 @@ final class ReviewController: NSObject, NSWindowDelegate {
 enum Focus {
     private static var prepared = [pid_t: Int]()
     static var lastInfo = ""
+    /// The text box found by the last successful `textFrame()`, to tell one box from the next.
+    static var lastElement: AXUIElement?
+    static var lastPid: pid_t = 0
 
     private static func attr(_ e: AXUIElement, _ name: String) -> CFTypeRef? {
         var v: CFTypeRef?
@@ -1031,6 +1034,7 @@ enum Focus {
         AXValueGetValue(sv as! AXValue, .cgSize, &size)
         guard size.width > 30, size.height > 10, let primary = NSScreen.screens.first else { return nil }
         lastInfo += " frame \(Int(pos.x)),\(Int(pos.y)) \(Int(size.width))x\(Int(size.height))"
+        lastElement = e; lastPid = pid
         return NSRect(x: pos.x, y: primary.frame.maxY - pos.y - size.height, width: size.width, height: size.height)
     }
 }
@@ -1042,6 +1046,14 @@ enum Focus {
 final class BubbleView: NSView {
     var onClick: (() -> Void)?
     var onTeach: (() -> Void)?
+    /// Called when a drag ends: the button was moved out of the way by hand.
+    var onMoved: (() -> Void)?
+    /// Called from the menu: back to the usual corner.
+    var onReset: (() -> Void)?
+    var moved = false
+    private(set) var dragging = false
+    private var dragStartMouse = NSPoint.zero
+    private var dragStartOrigin = NSPoint.zero
     private var holdTimer: Timer?
     private var menuShown = false
     private let icon = NSImageView()
@@ -1063,18 +1075,34 @@ final class BubbleView: NSView {
         icon.frame = bounds
         icon.imageAlignment = .alignCenter
         addSubview(icon)
-        toolTip = "Click: untangle this text. Right-click or hold: teach it your corrections"
+        toolTip = "Click: untangle this text. Drag: move it out of the way. Right-click or hold: teach it your corrections"
     }
     required init?(coder: NSCoder) { fatalError() }
     override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) == nil ? nil : self }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) {
         menuShown = false
+        dragging = false
+        dragStartMouse = NSEvent.mouseLocation
+        dragStartOrigin = window?.frame.origin ?? .zero
         holdTimer?.invalidate()
         holdTimer = Timer.scheduledTimer(withTimeInterval: 0.55, repeats: false) { [weak self] _ in self?.showMenu(event) }
     }
+    /// Dragging moves the button; it stays there for this text box.
+    override func mouseDragged(with event: NSEvent) {
+        if menuShown { return }
+        let m = NSEvent.mouseLocation
+        let dx = m.x - dragStartMouse.x, dy = m.y - dragStartMouse.y
+        if !dragging {
+            if abs(dx) < 4 && abs(dy) < 4 { return }  // a shaky click is still a click
+            dragging = true
+            holdTimer?.invalidate(); holdTimer = nil
+        }
+        window?.setFrameOrigin(clampToScreen(NSPoint(x: dragStartOrigin.x + dx, y: dragStartOrigin.y + dy)))
+    }
     override func mouseUp(with event: NSEvent) {
         holdTimer?.invalidate(); holdTimer = nil
+        if dragging { dragging = false; onMoved?(); return }
         if menuShown { menuShown = false; return }
         if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
     }
@@ -1087,11 +1115,18 @@ final class BubbleView: NSView {
         let teach = NSMenuItem(title: "Teach: learn from what I corrected", action: #selector(menuTeach), keyEquivalent: "")
         let settings = NSMenuItem(title: "Settings…", action: #selector(AppDelegate.showPanel), keyEquivalent: "")
         fix.target = self; teach.target = self; settings.target = NSApp.delegate
-        menu.addItem(fix); menu.addItem(teach); menu.addItem(.separator()); menu.addItem(settings)
+        menu.addItem(fix); menu.addItem(teach)
+        if moved {
+            let back = NSMenuItem(title: "Put the button back in its corner", action: #selector(menuReset), keyEquivalent: "")
+            back.target = self
+            menu.addItem(back)
+        }
+        menu.addItem(.separator()); menu.addItem(settings)
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: bounds.maxY + 4), in: self)
     }
     @objc private func menuFix() { onClick?() }
     @objc private func menuTeach() { onTeach?() }
+    @objc private func menuReset() { onReset?() }
 }
 
 let bubbleSize: CGFloat = 26
@@ -1101,6 +1136,19 @@ let bubbleSize: CGFloat = 26
 func bubbleOrigin(for box: NSRect) -> NSPoint {
     let y = box.height < 44 ? box.midY - bubbleSize / 2 : box.minY + 6
     return NSPoint(x: box.maxX - bubbleSize - 6, y: y)
+}
+
+/// Keeps the button fully on a screen, so it can never be dragged out of reach.
+func clampToScreen(_ origin: NSPoint) -> NSPoint {
+    let centre = NSPoint(x: origin.x + bubbleSize / 2, y: origin.y + bubbleSize / 2)
+    guard let screen = NSScreen.screens.first(where: { $0.frame.contains(centre) })
+        ?? NSScreen.screens.min(by: { distance($0.frame, centre) < distance($1.frame, centre) }) else { return origin }
+    let f = screen.frame
+    return NSPoint(x: min(max(origin.x, f.minX), f.maxX - bubbleSize), y: min(max(origin.y, f.minY), f.maxY - bubbleSize))
+}
+private func distance(_ r: NSRect, _ p: NSPoint) -> CGFloat {
+    let dx = max(r.minX - p.x, 0, p.x - r.maxX), dy = max(r.minY - p.y, 0, p.y - r.maxY)
+    return dx * dx + dy * dy
 }
 
 func makeBubble(onClick: @escaping () -> Void, onTeach: @escaping () -> Void) -> (NSPanel, BubbleView) {
@@ -1313,6 +1361,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let review = ReviewController()
     private var busy = false { didSet { showBusy() } }
     private var bubble: (NSPanel, BubbleView)?
+    /// How far the button was dragged away from its usual corner. Lasts while you stay in the same text box.
+    private var nudge = NSPoint.zero
+    private var nudgeElement: AXUIElement?
+    private var nudgePid: pid_t = 0
+    private var nudgeBox = NSRect.zero
+    private var lastBox = NSRect.zero
+
+    private func clearNudge() {
+        nudge = .zero; nudgeElement = nil
+        bubble?.1.moved = false
+    }
+    /// A drag ended: remember where the button now sits, relative to its usual corner.
+    private func bubbleMoved() {
+        guard let panel = bubble?.0 else { return }
+        let home = bubbleOrigin(for: lastBox)
+        nudge = NSPoint(x: panel.frame.origin.x - home.x, y: panel.frame.origin.y - home.y)
+        nudgeElement = Focus.lastElement; nudgePid = Focus.lastPid; nudgeBox = lastBox
+        bubble?.1.moved = true
+        Log.add("button moved by \(Int(nudge.x)),\(Int(nudge.y))")
+    }
+    /// Still the text box the button was moved in? Some apps hand out a new element each time, so the box's place counts too.
+    private func sameBoxAsNudge(_ box: NSRect) -> Bool {
+        if let a = nudgeElement, let b = Focus.lastElement, CFEqual(a, b) { return true }
+        return Focus.lastPid == nudgePid && abs(box.minX - nudgeBox.minX) < 2 && abs(box.width - nudgeBox.width) < 2
+    }
     private var nudged = false
     private var showBubble: Bool {
         get { UserDefaults.standard.bool(forKey: "bubble") }
@@ -1495,10 +1568,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func placeBubble() {
         guard AXIsProcessTrusted() else { bubble?.0.orderOut(nil); return }
         if busy { return }  // stay put while a fix is running
-        guard let box = Focus.textFrame() else { bubble?.0.orderOut(nil); return }
-        if bubble == nil { bubble = makeBubble(onClick: { [weak self] in self?.trigger() }, onTeach: { [weak self] in self?.teach() }) }
+        if bubble?.1.dragging == true { return }  // and while it is being dragged
+        // Leaving the text box puts the button back in its usual corner for next time.
+        guard let box = Focus.textFrame() else { bubble?.0.orderOut(nil); clearNudge(); return }
+        if bubble == nil {
+            bubble = makeBubble(onClick: { [weak self] in self?.trigger() }, onTeach: { [weak self] in self?.teach() })
+            bubble?.1.onMoved = { [weak self] in self?.bubbleMoved() }
+            bubble?.1.onReset = { [weak self] in self?.clearNudge() }
+        }
         guard let panel = bubble?.0 else { return }
-        let origin = bubbleOrigin(for: box)
+        if bubble?.1.moved == true && !sameBoxAsNudge(box) { clearNudge() }
+        lastBox = box
+        let home = bubbleOrigin(for: box)
+        let origin = bubble?.1.moved == true ? clampToScreen(NSPoint(x: home.x + nudge.x, y: home.y + nudge.y)) : home
         if abs(panel.frame.origin.x - origin.x) > 0.5 || abs(panel.frame.origin.y - origin.y) > 0.5 { panel.setFrameOrigin(origin) }
         if !panel.isVisible { panel.orderFrontRegardless() }
     }

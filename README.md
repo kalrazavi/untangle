@@ -30,7 +30,7 @@ Every time Untangle fixes a word that is not a real word in English or German (`
 
 ## What it does
 
-- A small squiggle button sits inside whatever text box you are typing in. One click and the text is corrected in place, in about a second per sentence.
+- A small squiggle button sits inside whatever text box you are typing in. One click and the text is corrected in place, in about a second per sentence. If it covers what you are writing in a small box, drag it out of the way; it stays there until you leave that box, and next time it is back in its corner.
 - No copying, no pasting, no second window. Or select text anywhere and press **Shift + Command + U**, or use right-click > Services > Untangle.
 - Optional review mode shows every change underlined. Click one to accept it or keep your original.
 - Settings live in a small card under the menu bar icon. **Show in menu bar** is a tick box on that card: switch it off and the icon goes away at once, no restart. Untangle keeps working in the background, and the card then opens whenever you open Untangle from Applications or Spotlight. Right-click the squiggle > Settings… opens it either way.
