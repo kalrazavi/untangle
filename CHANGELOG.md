@@ -6,6 +6,14 @@ Dates are when the change went live. Commit IDs link each entry to the code.
 
 ---
 
+## v1.9 · 28 Nov 2026 · A button I can move
+`bb10fa6`
+
+### Added
+- **The squiggle button can be dragged out of the way.**
+  Noticed: in a small text box the button sat on top of what I was writing.
+  Change: it still appears in its usual corner, but I can now drag it anywhere on the screen. It stays there while I keep typing in that box. When I leave the box it is back in its corner the next time, and the right-click menu has "Put the button back in its corner". A normal click still untangles; a drag never triggers a fix by accident.
+
 ## v1.8 · 26 Nov 2026 · "id" and "ill"
 `c9157e5`
 
